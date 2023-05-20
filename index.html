@@ -24,7 +24,7 @@
     <script type="importmap">
         {
             "imports": {
-                "three": "./lib/three/build/three.module.js",
+                "three": "./lib/three/src/Three.js",
                 "three/addons/": "./lib/three/examples/jsm/"
             }
         }
@@ -46,9 +46,13 @@
         import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
         import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
+        import Bakery01 from './bakery01.js'
+
+        console.log(Bakery01)
+
         let camera, scene, renderer, ambientLight;
         let controls, loader
-        let gltfScene
+        let userScene
 
         let textureLoader = new THREE.TextureLoader()
         const flare0 = textureLoader.load('./assets/texture/lensflare0.png');
@@ -81,6 +85,14 @@
             initControls();
             initDropZone();
             initGui();
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                render();
+            });
+
             loadModel('./assets/Bedroom Interior Design (Baking Test).glb')
         }
 
@@ -96,7 +108,7 @@
             renderer.outputEncoding = THREE.sRGBEncoding;
             container.appendChild(renderer.domElement);
 
-            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 20);
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 20);
             camera.position.set(0, 2, 3);
 
             scene = new THREE.Scene();
@@ -121,14 +133,6 @@
                     render
                 });
             })
-
-
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-                render();
-            });
         }
 
         function initLoaders() {
@@ -163,17 +167,33 @@
                 event.dataTransfer.dropEffect = 'copy';
             });
 
-            dropZone.addEventListener('drop', function (event) {
+            dropZone.addEventListener('drop', async function (event) {
                 event.stopPropagation();
                 event.preventDefault();
-                handleFiles(event.dataTransfer.files);
+                console.log(event.dataTransfer.files)
+                loadModel(await createBlobURL(event.dataTransfer.files[0]))
             });
+        }
+
+        function createBlobURL(file) {
+            return new Promise((resolve) => {
+                var reader = new FileReader();
+                reader.onload = function (event) {
+                    var blob = new Blob([event.target.result]);
+                    var url = URL.createObjectURL(blob);
+                    resolve(url); // call the callback function with the created Blob URL
+                };
+                reader.onerror = function (event) {
+                    console.error("File could not be read! Code " + event.target.error.code);
+                };
+                reader.readAsArrayBuffer(file);
+            })
         }
 
         function initGui() {
             const pane = new Tweakpane.Pane();
             pane.addInput(state, 'enabled').on('change', () => {
-                forEachMaterial(gltfScene, (mat) => {
+                forEachMaterial(userScene, (mat) => {
                     mat.vertexColors = state.enabled
                 })
                 render()
@@ -181,10 +201,10 @@
             pane.addInput(state, 'shadowing', { min: 0, max: 1, step: 0.05 })
             pane.addInput(state, 'lighting', { min: 0, max: 1, step: 0.05 })
             pane.addInput(state, 'flares', { min: 0, max: 1, step: 0.05 }).on('change', () => {
-                forEachLight(gltfScene, (light) => {
+                forEachLight(userScene, (light) => {
                     light.children.forEach((child) => {
                         if (child.isLensflare) {
-                            child.intensity = state.flares
+                            child.intensity = state.flares * (light.isDirectionalLight ? 2 : 0.5)
                         }
                     })
                 })
@@ -197,13 +217,13 @@
             })
             pane.addInput(state, 'environment', { min: 0, max: 1, step: 0.05 }).on('change', () => {
                 scene.backgroundIntensity = state.environment;
-                forEachMaterial(gltfScene, (mat) => {
+                forEachMaterial(userScene, (mat) => {
                     mat.envMapIntensity = state.environment + state.environmentImpact;
                 })
                 render();
             })
             pane.addInput(state, 'environmentImpact', { min: -1, max: 1, step: 0.05 }).on('change', () => {
-                forEachMaterial(gltfScene, (mat) => {
+                forEachMaterial(userScene, (mat) => {
                     mat.envMapIntensity = Math.max(0, Math.min(1, state.environment + state.environmentImpact));
                 })
                 render();
@@ -215,6 +235,7 @@
                 if (item.isMesh) {
                     let materials = Array.isArray(item.material) ? item.material : [item.material]
                     materials.forEach((mat) => {
+                        console.log(`processing material "${mat.name}"`, mat)
                         callback(mat, item)
                     })
                 }
@@ -238,6 +259,8 @@
                 lensflare.addElement(new LensflareElement(flare1, flare_data[0], flare_data[1]));
             }
 
+
+            lensflare.intensity = intensity
             light.add(lensflare)
             return lensflare
         }
@@ -251,6 +274,16 @@
         }
 
         function loadModel(filePath) {
+            if (userScene != null) {
+                userScene.traverse((item) => {
+                    if (item.geometry) {
+                        item.geometry.dispose()
+                    }
+                })
+                forEachMaterial(userScene, (mat) => mat.dispose())
+                scene.remove(userScene);
+                userScene = null
+            }
             return new Promise((resolve) => {
                 let dirPath = getDirectoryPath(filePath)
                 let fileName = filePath.replace(dirPath, '');
@@ -258,7 +291,7 @@
                 loader.setPath(dirPath)
 
                 loader.load(fileName, function (gltf) {
-                    gltfScene = gltf.scene
+                    userScene = gltf.scene
                     console.log(gltf)
 
                     // scene scaling and aligning
@@ -277,16 +310,16 @@
                         -sphere.center.z,
                     )
 
-                    forEachMaterial(gltfScene, (mat) => {
+                    forEachMaterial(userScene, (mat) => {
                         mat.envMapIntensity = state.environment;
                     })
 
                     // normalizing gltf+three lighting units mess
                     let maxLightIntensity = 0;
-                    forEachLight(gltfScene, (light) => {
+                    forEachLight(userScene, (light) => {
                         maxLightIntensity = Math.max(maxLightIntensity, light.intensity)
                     })
-                    forEachLight(gltfScene, (light) => {
+                    forEachLight(userScene, (light) => {
                         let normalizedIntensity = light.intensity / maxLightIntensity;
                         light.normalizedIntensity = normalizedIntensity
                         Object.defineProperty(light, 'intensity', {
@@ -295,8 +328,9 @@
                             }
                         })
 
+                        light.distance = light.distance == 0 ? 1 : light.distance
                         // adding lens flares to each light source
-                        addLensFlareToLight(light, light.isDirectionalLight ? 4 : 1, normalizedIntensity * state.flares)
+                        addLensFlareToLight(light, light.isDirectionalLight ? 4 : 1, state.flares * (light.isDirectionalLight ? 2 : 0.5))
                     })
 
                     console.log(`max scene light intensity: ${maxLightIntensity}`)
