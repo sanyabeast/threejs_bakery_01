@@ -53,6 +53,7 @@
         let camera, scene, renderer, ambientLight;
         let controls, loader
         let userScene
+        let pane
 
         let textureLoader = new THREE.TextureLoader()
         const flare0 = textureLoader.load('./assets/texture/lensflare0.png');
@@ -60,14 +61,12 @@
 
         let state = {
             enabled: true,
-            shadowing: 1,
             lighting: 1,
-            flares: 0.5,
+            flares: 1,
             punctual: 0,
-            ambient: 0.25,
-            sun: 0.5,
-            environment: 0.5,
-            environmentImpact: 0
+            ambient: 0,
+            environment: 0.1,
+            environmentImpact: -0.05
         }
 
         let secondaryFlaresMap = [
@@ -103,9 +102,11 @@
             renderer = new THREE.WebGLRenderer({ antialias: false });
             renderer.setPixelRatio(window.devicePixelRatio);
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMapping = THREE.LinearToneMapping;
             renderer.toneMappingExposure = 1;
             renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.gammaFactor = 1
+            renderer.physicallyCorrectLights = true
             container.appendChild(renderer.domElement);
 
             camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.01, 20);
@@ -129,6 +130,7 @@
                 new RGBELoader().load("assets/dikhololo_night_4k.hdr", function (texture) {
                     texture.mapping = THREE.EquirectangularReflectionMapping;
                     scene.background = texture;
+                    scene.backgroundIntensity = state.environment
                     scene.environment = texture;
                     render
                 });
@@ -154,8 +156,11 @@
             controls.addEventListener('change', render); // use if there is no animation loop
             controls.minDistance = 0.1;
             controls.maxDistance = 5;
-            controls.target.set(0, 0, 0);
+            controls.object.position.set(0.06785434410043728, 0.485231926679771, 1.782980065465598)
+            controls.target.set(0.0162651718473893, 0.142688604330217, -0.03519590447642134);
             controls.update();
+
+            console.log(controls)
         }
 
         function initDropZone() {
@@ -191,16 +196,52 @@
         }
 
         function initGui() {
-            const pane = new Tweakpane.Pane();
-            pane.addInput(state, 'enabled').on('change', () => {
+            pane = new Tweakpane.Pane();
+
+            pane.addBlade({
+                view: 'list',
+                label: 'Mode',
+                options: [
+                    { text: 'Bakery + Flares', value: 0 },
+                    { text: 'Classic Lighting', value: 1 }
+                ],
+                value: 0
+
+            }).on('change', ({ value }) => {
+                console.log(value)
+                switch (value) {
+                    case 0: {
+                        state.enabled = true
+                        state.punctual = 0
+                        state.lighting = 1
+                        state.flares = 1
+                        pane.refresh()
+                        break;
+                    }
+                    case 1: {
+                        state.enabled = false
+                        state.punctual = 16
+                        state.lighting = 1
+                        state.flares = 0
+                        pane.refresh()
+                        break;
+                    }
+                }
+
+                forEachMaterial(userScene, (mat) => {
+                    mat.vertexColors = state.enabled
+                })
+
+                render()
+            })
+            pane.addInput(state, 'enabled', { label: 'Bakery Enabled', }).on('change', () => {
                 forEachMaterial(userScene, (mat) => {
                     mat.vertexColors = state.enabled
                 })
                 render()
             })
-            pane.addInput(state, 'shadowing', { min: 0, max: 1, step: 0.05 })
-            pane.addInput(state, 'lighting', { min: 0, max: 1, step: 0.05 })
-            pane.addInput(state, 'flares', { min: 0, max: 1, step: 0.05 }).on('change', () => {
+            pane.addInput(state, 'lighting', { label: 'Baked Lights', min: 0, max: 1, step: 0.05 }).on('change', render)
+            pane.addInput(state, 'flares', { label: 'Flares', min: 0, max: 1, step: 0.05 }).on('change', () => {
                 forEachLight(userScene, (light) => {
                     light.children.forEach((child) => {
                         if (child.isLensflare) {
@@ -210,19 +251,19 @@
                 })
                 render()
             })
-            pane.addInput(state, 'punctual', { min: 0, max: 1, step: 0.05 }).on('change', render)
-            pane.addInput(state, 'ambient', { min: 0, max: 1, step: 0.05 }).on('change', () => {
+            pane.addInput(state, 'punctual', { label: 'Scene Lights', min: 0, max: 16, step: 0.05 }).on('change', render)
+            pane.addInput(state, 'ambient', { label: 'Ambient Light', min: 0, max: 1, step: 0.05 }).on('change', () => {
                 ambientLight.intensity = state.ambient;
                 render();
             })
-            pane.addInput(state, 'environment', { min: 0, max: 1, step: 0.05 }).on('change', () => {
+            pane.addInput(state, 'environment', { label: 'Env Brightness', min: 0, max: 1, step: 0.05 }).on('change', () => {
                 scene.backgroundIntensity = state.environment;
                 forEachMaterial(userScene, (mat) => {
                     mat.envMapIntensity = state.environment + state.environmentImpact;
                 })
                 render();
             })
-            pane.addInput(state, 'environmentImpact', { min: -1, max: 1, step: 0.05 }).on('change', () => {
+            pane.addInput(state, 'environmentImpact', { label: 'Env Impact', min: -1, max: 1, step: 0.05 }).on('change', () => {
                 forEachMaterial(userScene, (mat) => {
                     mat.envMapIntensity = Math.max(0, Math.min(1, state.environment + state.environmentImpact));
                 })
@@ -312,6 +353,51 @@
 
                     forEachMaterial(userScene, (mat) => {
                         mat.envMapIntensity = state.environment;
+                        mat.onBeforeCompile = function (shader) {
+                            shader.uniforms.bakedLightIntensity = {
+                                get value() {
+                                    return state.lighting
+                                }
+                            }
+
+                            let pars_code = `
+                            #if defined(USE_COLOR)
+                                uniform float bakedLightIntensity;
+                            #endif
+                            `
+                            let main_code = `
+                            #if defined( USE_COLOR )
+                                irradiance += (vColor.rgb * 3.14) * bakedLightIntensity;
+                                reflectedLight.indirectDiffuse += (vColor.rgb * 3.14) * bakedLightIntensity;
+                            #endif
+                            `
+
+                            let main_code2 = `
+                            #if defined( USE_COLOR )
+                                /** stubbed */
+                            #endif
+                            `
+
+                            shader.fragmentShader = `
+                                ${pars_code}
+                                ${shader.fragmentShader
+                                    .replace("#include <lights_fragment_begin>", `#include <lights_fragment_begin>\n${main_code}`)
+                                    .replace("#include <color_fragment>", `${main_code2}\n`)}
+                            `
+                            console.log(shader)
+                            //                     shader.uniforms.customUniform = { value: 0.5 };
+
+                            //                     shader.vertexShader = 'uniform float customUniform;\n' + shader.vertexShader;
+                            //                     shader.fragmentShader = 'uniform float customUniform;\n' + shader.fragmentShader;
+
+                            //                     shader.fragmentShader = shader.fragmentShader.replace(
+                            //                         `vec4 diffuseColor = vec4( diffuse, opacity );`,
+                            //                         `
+                            // vec4 diffuseColor = vec4( diffuse, opacity );
+                            // diffuseColor.r *= customUniform;
+                            // `
+                            // );
+                        };
                     })
 
                     // normalizing gltf+three lighting units mess
@@ -328,12 +414,10 @@
                             }
                         })
 
-                        light.distance = light.distance == 0 ? 1 : light.distance
+                        // light.distance = light.distance == 0 ? 1 : light.distance
                         // adding lens flares to each light source
                         addLensFlareToLight(light, light.isDirectionalLight ? 4 : 1, state.flares * (light.isDirectionalLight ? 2 : 0.5))
                     })
-
-                    console.log(`max scene light intensity: ${maxLightIntensity}`)
 
                     scene.add(gltf.scene);
                     render()

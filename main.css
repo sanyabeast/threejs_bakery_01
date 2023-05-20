@@ -94,3 +94,7 @@ select {
     margin-top: 20px;
     padding: 10px;
 }
+
+.tp-lblv_v {
+    width: 120px!important;
+}
