@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>three.js webgl - GLTFloader + compressed</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <link type="text/css" rel="stylesheet" href="main.css">
+</head>
+
+<body>
+    <div id="info">
+        <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - GLTFLoader + compression
+        extensions<br />
+        <a href="https://sketchfab.com/3d-models/coffeemat-7fb196a40a6e4697aad9ca2f75c8b33d" target="_blank"
+            rel="noopener">Coffeemat</a> by
+        <a href="https://sketchfab.com/OFFcours1" target="_blank" rel="noopener">Roman Red</a>
+    </div>
+
+    <!-- Import maps polyfill -->
+    <!-- Remove this when import maps will be widely supported -->
+    <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "./lib/three/build/three.module.js",
+                "three/addons/": "./lib/three/examples/jsm/"
+            }
+        }
+	</script>
+
+    <script src="lib/tweakpane-3.1.9.min.js"></script>
+
+    <script type="module">
+
+        import * as THREE from 'three';
+
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { Lensflare, LensflareElement } from 'three/addons/objects/Lensflare.js';
+
+        import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+        import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+        import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+
+        let camera, scene, renderer, ambientLight;
+        let controls, loader
+        let gltfScene
+
+        let textureLoader = new THREE.TextureLoader()
+        const flare0 = textureLoader.load('./assets/texture/lensflare0.png');
+        const flare1 = textureLoader.load('./assets/texture/lensflare3.png');
+
+        let state = {
+            enabled: true,
+            shadowing: 1,
+            lighting: 1,
+            flares: 0.5,
+            punctual: 0,
+            ambient: 0.25,
+            sun: 0.5,
+            environment: 0.5,
+            environmentImpact: 0
+        }
+
+        let secondaryFlaresMap = [
+            [60, 0.6],
+            [70, 0.7],
+            [120, 0.9],
+            [70, 0.1]
+        ]
+
+        init();
+
+        function init() {
+            initRenderer();
+            initLoaders();
+            initControls();
+            initDropZone();
+            initGui();
+            loadModel('./assets/Bedroom Interior Design (Baking Test).glb')
+        }
+
+        function initRenderer() {
+            const container = document.createElement('div');
+            document.body.appendChild(container);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1;
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            container.appendChild(renderer.domElement);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 20);
+            camera.position.set(0, 2, 3);
+
+            scene = new THREE.Scene();
+
+            const grid = new THREE.GridHelper(2, 20, 0xffffff, 0xffffff);
+            grid.material.opacity = 0.1;
+            grid.material.depthWrite = false;
+            grid.material.transparent = true;
+            grid.position.y = -0.1
+            scene.add(grid);
+
+            // ambient light 
+            ambientLight = new THREE.AmbientLight(0xeeeeff)
+            ambientLight.intensity = state.ambient
+            scene.add(ambientLight)
+
+            return new Promise((resolve, reject) => {
+                new RGBELoader().load("assets/dikhololo_night_4k.hdr", function (texture) {
+                    texture.mapping = THREE.EquirectangularReflectionMapping;
+                    scene.background = texture;
+                    scene.environment = texture;
+                    render
+                });
+            })
+
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                render();
+            });
+        }
+
+        function initLoaders() {
+            const ktx2Loader = new KTX2Loader()
+                .setTranscoderPath('lib/three/examples/jsm/libs/basis/')
+                .detectSupport(renderer);
+
+            let dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('lib/three/examples/jsm/libs/draco/gltf/');
+
+            loader = new GLTFLoader();
+            loader.setDRACOLoader(dracoLoader)
+            loader.setKTX2Loader(ktx2Loader);
+            loader.setMeshoptDecoder(MeshoptDecoder);
+        }
+
+        function initControls() {
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.addEventListener('change', render); // use if there is no animation loop
+            controls.minDistance = 0.1;
+            controls.maxDistance = 5;
+            controls.target.set(0, 0, 0);
+            controls.update();
+        }
+
+        function initDropZone() {
+            let dropZone = document.body;
+
+            dropZone.addEventListener('dragover', function (event) {
+                event.stopPropagation();
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'copy';
+            });
+
+            dropZone.addEventListener('drop', function (event) {
+                event.stopPropagation();
+                event.preventDefault();
+                handleFiles(event.dataTransfer.files);
+            });
+        }
+
+        function initGui() {
+            const pane = new Tweakpane.Pane();
+            pane.addInput(state, 'enabled').on('change', () => {
+                forEachMaterial(gltfScene, (mat) => {
+                    mat.vertexColors = state.enabled
+                })
+                render()
+            })
+            pane.addInput(state, 'shadowing', { min: 0, max: 1, step: 0.05 })
+            pane.addInput(state, 'lighting', { min: 0, max: 1, step: 0.05 })
+            pane.addInput(state, 'flares', { min: 0, max: 1, step: 0.05 }).on('change', () => {
+                forEachLight(gltfScene, (light) => {
+                    light.children.forEach((child) => {
+                        if (child.isLensflare) {
+                            child.intensity = state.flares
+                        }
+                    })
+                })
+                render()
+            })
+            pane.addInput(state, 'punctual', { min: 0, max: 1, step: 0.05 }).on('change', render)
+            pane.addInput(state, 'ambient', { min: 0, max: 1, step: 0.05 }).on('change', () => {
+                ambientLight.intensity = state.ambient;
+                render();
+            })
+            pane.addInput(state, 'environment', { min: 0, max: 1, step: 0.05 }).on('change', () => {
+                scene.backgroundIntensity = state.environment;
+                forEachMaterial(gltfScene, (mat) => {
+                    mat.envMapIntensity = state.environment + state.environmentImpact;
+                })
+                render();
+            })
+            pane.addInput(state, 'environmentImpact', { min: -1, max: 1, step: 0.05 }).on('change', () => {
+                forEachMaterial(gltfScene, (mat) => {
+                    mat.envMapIntensity = Math.max(0, Math.min(1, state.environment + state.environmentImpact));
+                })
+                render();
+            })
+        }
+
+        function forEachMaterial(scene, callback) {
+            scene.traverse((item) => {
+                if (item.isMesh) {
+                    let materials = Array.isArray(item.material) ? item.material : [item.material]
+                    materials.forEach((mat) => {
+                        callback(mat, item)
+                    })
+                }
+            })
+        }
+
+        function forEachLight(scene, callback) {
+            scene.traverse((item) => {
+                if (item.isLight) {
+                    callback(item)
+                }
+            })
+        }
+
+
+        function addLensFlareToLight(light, secondaryFlares = 4, intensity = 1) {
+            const lensflare = new Lensflare(light);
+            lensflare.addElement(new LensflareElement(flare0, 700, 0, light.color));
+            for (let i = 0; i < secondaryFlares; i++) {
+                let flare_data = secondaryFlaresMap[i % secondaryFlaresMap.length]
+                lensflare.addElement(new LensflareElement(flare1, flare_data[0], flare_data[1]));
+            }
+
+            light.add(lensflare)
+            return lensflare
+        }
+
+        function getDirectoryPath(filePath) {
+            let lastSlashPosition = filePath.lastIndexOf('/');
+            if (lastSlashPosition === -1) {
+                return '';
+            }
+            return filePath.substring(0, lastSlashPosition);
+        }
+
+        function loadModel(filePath) {
+            return new Promise((resolve) => {
+                let dirPath = getDirectoryPath(filePath)
+                let fileName = filePath.replace(dirPath, '');
+
+                loader.setPath(dirPath)
+
+                loader.load(fileName, function (gltf) {
+                    gltfScene = gltf.scene
+                    console.log(gltf)
+
+                    // scene scaling and aligning
+                    let sphere = new THREE.Sphere();
+                    let box = new THREE.Box3().setFromObject(gltf.scene);
+                    console.log(box)
+                    box.getBoundingSphere(sphere);
+
+                    gltf.scene.scale.setScalar(1 / sphere.radius)
+
+                    box.setFromObject(gltf.scene)
+                    box.getBoundingSphere(sphere);
+                    gltf.scene.position.set(
+                        -sphere.center.x,
+                        -box.min.y,
+                        -sphere.center.z,
+                    )
+
+                    forEachMaterial(gltfScene, (mat) => {
+                        mat.envMapIntensity = state.environment;
+                    })
+
+                    // normalizing gltf+three lighting units mess
+                    let maxLightIntensity = 0;
+                    forEachLight(gltfScene, (light) => {
+                        maxLightIntensity = Math.max(maxLightIntensity, light.intensity)
+                    })
+                    forEachLight(gltfScene, (light) => {
+                        let normalizedIntensity = light.intensity / maxLightIntensity;
+                        light.normalizedIntensity = normalizedIntensity
+                        Object.defineProperty(light, 'intensity', {
+                            get() {
+                                return normalizedIntensity * state.punctual;
+                            }
+                        })
+
+                        // adding lens flares to each light source
+                        addLensFlareToLight(light, light.isDirectionalLight ? 4 : 1, normalizedIntensity * state.flares)
+                    })
+
+                    console.log(`max scene light intensity: ${maxLightIntensity}`)
+
+                    scene.add(gltf.scene);
+                    render()
+                    resolve()
+                });
+            })
+        }
+
+
+
+        //
+
+        function render() {
+            renderer.render(scene, camera);
+        }
+
+
+    </script>
+
+</body>
+
+</html>
